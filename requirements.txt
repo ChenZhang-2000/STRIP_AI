@@ -1,0 +1,11 @@
+Pillow~=9.2.0
+pandas~=1.4.3
+numpy~=1.23.2
+tifffile~=2022.7.28
+matplotlib~=3.5.3
+torch --extra-index-url https://download.pytorch.org/whl/cu113
+torchvision --extra-index-url https://download.pytorch.org/whl/cu113
+torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
+opencv-python~=4.6.0.66
+pyvips~=2.2.1
+imagesize~=1.4.1

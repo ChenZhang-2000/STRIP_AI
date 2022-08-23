@@ -1,9 +1,11 @@
 import time
 
+import yaml
+from torch.utils.data import DataLoader
+
 from data.dataset import StripDataset, collate_fn
 from model.networks.classifier import Classifier
 
-from torch.utils.data import DataLoader
 
 
 if __name__ == "__main__":
