@@ -1,0 +1,19 @@
+module:
+  classifier: "20220824"
+  optimizer: "Adam"
+  loss: "CrossEntropy"
+  scheduler: "Exp_980d"
+
+seed: -1
+dataset: 'Avg_Aug'
+test_set: 'Avg_gd'
+store: True
+num_workers: 0
+in_dimensions: [0, 5]
+test_size: 0.25
+img_size: 512
+bs: 4
+max_epoch: 300
+lr: 0.00001
+backbone_layers: [3, 4, 23, 3]
+attention_layers: [4, 2]

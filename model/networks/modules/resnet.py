@@ -1,170 +1,36 @@
+import torch
 from torch import nn
+from torchvision.models.resnet import ResNet, Bottleneck
 
 
-class ResBlock(nn.Module):
-    def __init__(self, channel=64):
-        super(ResBlock, self).__init__()
-        self.channel = channel
+class ResNetModel(nn.Module):
+    def __init__(self, num_blocks, in_channel=3):
+        super(ResNetModel, self).__init__()
+        resnet = ResNet(Bottleneck, num_blocks)
 
-        self.res = nn.Sequential(
-            nn.Conv2d(self.channel, self.channel, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.InstanceNorm2d(self.channel, affine=True),
-            nn.LeakyReLU(),
-            nn.Conv2d(self.channel, self.channel, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.InstanceNorm2d(self.channel, affine=True)
-        )
-        self.act = nn.ReLU()
-
-    def forward(self, x):
-        out = self.res(x)
-        out += x  # self.shortcut(x)
-        out = self.act(out)
-        return out
-
-
-class ResStrideBlock(nn.Module):
-
-    def __init__(self, in_channel=64, out_channel=128):
-        super(ResStrideBlock, self).__init__()
-        self.in_dim = in_channel
-        self.out_dim = out_channel
-
-        self.res = nn.Sequential(
-            nn.Conv2d(self.in_dim, self.out_dim, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.InstanceNorm2d(self.out_dim, affine=True),
-            nn.LeakyReLU(),
-            nn.Conv2d(self.out_dim, self.out_dim, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.InstanceNorm2d(self.out_dim, affine=True)
-        )
-        self.shortcut = nn.Sequential(
-            nn.Conv2d(self.in_dim, self.out_dim, kernel_size=1,
-                      stride=2, bias=False),
-            nn.InstanceNorm2d(self.out_dim, affine=True))
-        self.act = nn.LeakyReLU()
+        self.conv1 = nn.Conv2d(in_channel, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = resnet.bn1
+        self.relu = resnet.relu
+        self.maxpool = resnet.maxpool
+        self.layer1 = resnet.layer1
+        self.layer2 = resnet.layer2
+        self.layer3 = resnet.layer3
+        self.layer4 = resnet.layer4
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.grid_avg_pool = nn.AdaptiveAvgPool2d((7, 7))
+        self.flatten = nn.Flatten()
 
     def forward(self, x):
-        out = self.res(x)
-        out += self.shortcut(x)
-        out = self.act(out)
-        return out
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
 
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x1 = self.layer4(x)
 
-class BottleNeck(nn.Module):
-    def __init__(self, channel):
-        super(BottleNeck, self).__init__()
+        x1 = self.avg_pool(x1)
 
-        self.channel = channel
-
-        self.main = nn.Sequential(
-            nn.Conv2d(4*channel, channel, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.InstanceNorm2d(channel, affine=True),
-            nn.ReLU(),
-            nn.Conv2d(channel, channel, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.InstanceNorm2d(channel, affine=True),
-            nn.ReLU(),
-            nn.Conv2d(channel, 4*channel, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.InstanceNorm2d(4*channel, affine=True),
-        )
-
-        self.act = nn.ReLU()
-
-    def forward(self, x):
-        out = self.main(x)
-        out += x
-        return self.act(out)
-
-
-class BottleNeckStride(nn.Module):
-    def __init__(self, in_channel):
-        super(BottleNeckStride, self).__init__()
-
-        channel = in_channel
-
-        self.main = nn.Sequential(
-            nn.Conv2d(4*channel, 2*channel, kernel_size=1, stride=2, padding=0, bias=False),
-            nn.InstanceNorm2d(2*channel, affine=True),
-            nn.ReLU(),
-            nn.Conv2d(2*channel, 2*channel, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.InstanceNorm2d(2*channel, affine=True),
-            nn.ReLU(),
-            nn.Conv2d(2*channel, 8*channel, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.InstanceNorm2d(8*channel, affine=True),
-        )
-
-        self.identity = nn.Sequential(
-            nn.Conv2d(4*channel, 8*channel, kernel_size=1, stride=2, padding=0, bias=False),
-            nn.InstanceNorm2d(8*channel, affine=True),
-        )
-
-        self.act = nn.ReLU()
-
-    def forward(self, x):
-        out = self.main(x)
-        out += self.identity(x)
-        return self.act(out)
-
-
-class InitBottleNeck(nn.Module):
-    def __init__(self, channel):
-        super(InitBottleNeck, self).__init__()
-
-        self.main = nn.Sequential(
-            nn.Conv2d(channel, channel, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.InstanceNorm2d(channel, affine=True),
-            nn.ReLU(),
-            nn.Conv2d(channel, channel, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.InstanceNorm2d(channel, affine=True),
-            nn.ReLU(),
-            nn.Conv2d(channel, 4*channel, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.InstanceNorm2d(4*channel, affine=True),
-        )
-
-        self.shortcut = nn.Sequential(
-            nn.Conv2d(channel, 4*channel, kernel_size=1, stride=1, bias=False),
-            nn.InstanceNorm2d(4*channel, affine=True),
-        )
-
-        self.act = nn.ReLU()
-
-    def forward(self, x):
-        out = self.main(x)
-        out += self.shortcut(x)
-        return self.act(out)
-
-
-class ResNet50(nn.Module):
-    def __init__(self, channel):
-        super(ResNet50, self).__init__()
-
-        self.channel = channel
-
-        blocks = [InitBottleNeck(channel=self.channel),
-                  BottleNeck(channel=self.channel),
-                  BottleNeck(channel=self.channel),
-                  BottleNeck(channel=self.channel),
-                  nn.Dropout2d(0.1),
-                  BottleNeckStride(in_channel=self.channel),
-                  BottleNeck(channel=2*self.channel),
-                  BottleNeck(channel=2*self.channel),
-                  BottleNeck(channel=2*self.channel),
-                  BottleNeck(channel=2*self.channel),
-                  nn.Dropout2d(0.1),
-                  BottleNeckStride(in_channel=2*self.channel),
-                  BottleNeck(channel=4*self.channel),
-                  BottleNeck(channel=4*self.channel),
-                  BottleNeck(channel=4*self.channel),
-                  BottleNeck(channel=4*self.channel),
-                  BottleNeck(channel=4*self.channel),
-                  BottleNeck(channel=4*self.channel),
-                  nn.Dropout2d(0.1),
-                  BottleNeckStride(in_channel=4*self.channel),
-                  BottleNeck(channel=8*self.channel),
-                  BottleNeck(channel=8*self.channel),
-                  BottleNeck(channel=8*self.channel)]
-
-        self.blocks = nn.Sequential(*blocks)
-
-    def forward(self, x):
-        output = self.blocks(x)
-        # print(output.shape)
-        return output
+        return self.flatten(x1), self.grid_avg_pool(x)
