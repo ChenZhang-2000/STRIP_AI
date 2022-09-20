@@ -1,2 +1,2 @@
 device: 'cuda:0'
-data_dir: "E:\\Datasets\\STRIP_AI\\processed"
+data_dir: "E:\\Datasets\\STRIP_AI\\new_processed"

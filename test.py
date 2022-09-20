@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import numpy as np
 import torch
 from torch import nn
@@ -13,17 +14,20 @@ import pyvips
 import imagesize
 
 from data.preprocess import img_preprocess
+from model.networks.classifier import ResNet50
 
 
-img_size = 512
-downsampling = {"Max": nn.AdaptiveMaxPool2d((img_size, img_size)),
-                "Avg": nn.AdaptiveAvgPool2d((img_size, img_size)),
-                "Res": Resize((img_size, img_size))}
+directory = rf'E:\Datasets\STRIP_AI\new_processed\Avg'
+to_directory = rf'E:\Datasets\STRIP_AI\new_processed\Avg_gd_7'
 
-target = fr"E:\Datasets\STRIP_AI\raw\train\1f9d4f_0.tif"
 
-with torch.no_grad():
-    img_preprocess(target, fr"C:\Users\ChenZhang\Desktop\data",
-                   fr"b01110_", downsampling)
-
-# print(get_gradient(torch.rand(3,256,256)).shape)
+for idx, patient_id in enumerate(os.listdir(to_directory)):
+    if Path(to_directory + f"\\{patient_id}").is_dir():
+        for file_name in os.listdir(to_directory + f"\\{patient_id}"):
+            images = torch.load(to_directory + f"\\{patient_id}\\{file_name}")
+            # print(file_name)
+            for i, image in enumerate(images):
+                out = ResNet50(image)
+                if out.isnan().any():
+                    print(file_name, i)
+                    print()

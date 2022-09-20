@@ -71,11 +71,16 @@ class GradientDataset:
         else:
             self.label = label
 
+        self.n = torch.sum(torch.stack(label), dim=0)
+        # print(self.n)
+
         for i, patient_id in enumerate(list_dir):
             if store:
                 self.data.append(torch.load(directory + f"\\{patient_id}\\gradient.gd"))
             else:
                 self.data.append(directory + f"\\{patient_id}\\gradient.gd")
+
+        assert self.n[0] + self.n[1] == len(self.data)
 
     def __len__(self):
         return len(self.data)
@@ -101,11 +106,19 @@ class StripDataset:
     def __init__(self, base_directory, aug_set, test_size, random_state=42, dataset_class=GradientDataset, store=False,
                  test_set=True, test_direc=fr"Avg_gd", keep_dim=(0, 5)):
         self.test_set = test_set
+        self.dataset_class = dataset_class
+        self.store = store
+
         directory = fr"{base_directory}\{aug_set}"
+        self.directory = directory
         test_dir = fr"{base_directory}\{test_direc}"
+        self.test_dir = test_dir
 
         dim = 2
+        self.dim = dim
+        self.keep_dim = keep_dim
         labels_map = {'CE': 0, "LAA": 1}
+        self.labels_map = labels_map
         label_info = pd.read_csv(directory + "\\info.csv", index_col=0)
 
         patient_ids = label_info["patient_id"].to_list()
@@ -157,17 +170,22 @@ class StripDataset:
     def save_split(self, time_code):
         torch.save(self.split, rf"runs\{time_code}\split.data")
 
+    def read_split(self, time_code):
+        self.split = torch.load(rf"runs\{time_code}\split.data")
 
-if __name__ == "__main__":
-    dataset = StripDataset(r'E:\Datasets\STRIP_AI\processed', test_size=0.2)
-    # print(dataset[0])
-    loader = DataLoader(dataset.train, collate_fn=collate_fn, batch_size=80, shuffle=True)
-    t = time.time()
-    for i, (data, label) in enumerate(loader):
-        print(time.time()-t)
-        t = time.time()
-        # print(label)
-        # print(data[0][1])
-        # print(label[0])
-        if i == 1:
-            break
+        [[train_id, train_label],
+         [train_id_aug, train_label_aug],
+         [valid_id, valid_label],
+         [valid_id_aug, valid_label_aug]] = self.split
+
+        self.train = self.dataset_class(self.directory, train_id_aug, train_label_aug, store=self.store)
+        if self.test_set:
+            self.test = self.dataset_class(self.test_dir, valid_id,
+                                      list(map(lambda t: one_hot(torch.tensor(self.labels_map[t]), self.dim), valid_label)),
+                                      store=False, keep_dim=self.keep_dim)
+            self.valid = self.dataset_class(self.directory, valid_id_aug, valid_label_aug, store=False, keep_dim=self.keep_dim)
+        else:
+            self.test = None
+            self.valid = self.dataset_class(self.directory, valid_id_aug, valid_label_aug, store=False, keep_dim=self.keep_dim)
+
+

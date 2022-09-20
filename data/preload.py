@@ -12,8 +12,8 @@ from imgaug import augmenters as iaa
 from dataset import load_image
 from preprocess import get_gradient
 
-directory = rf'E:\Datasets\STRIP_AI\processed\Avg'
-to_directory = rf'E:\Datasets\STRIP_AI\processed\Avg_gd_7'
+directory = rf'E:\Datasets\STRIP_AI\new_processed\Avg'
+to_directory = rf'E:\Datasets\STRIP_AI\new_processed\Avg_gd_7'
 
 
 for idx, patient_id in enumerate(os.listdir(directory)):
@@ -26,7 +26,7 @@ for idx, patient_id in enumerate(os.listdir(directory)):
         groups = re.match(r"(\d{1,})_(?:\d{1,})(?:\.gd)", file_name).groups()
         image_num = int(groups[0])
         file_names.append(file_name)
-        gd = get_gradient(image).detach()
+        gd = get_gradient(image.cuda(), device='cuda:0').detach()
         if image_num != last_img_num:
             img_data.append([gd[:7]])
         else:

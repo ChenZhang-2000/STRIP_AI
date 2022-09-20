@@ -14,7 +14,7 @@ from data.dataset import collate_fn
 class Trainer:
     def __init__(self, classifier, num_workers, in_channel, backbone_layers, attention_layers, img_size, bs, max_epoch,
                  data, lr, optimizer, loss, scheduler, scheduler_params,  device='cuda:0', weights_directory=r'runs',
-                 selection_metric='AUROC', random_seed=42):
+                 selection_metric='AUROC', random_seed=42, backbone=None, pretrained=None):
 
         self.num_workers = num_workers
         self.random_seed = random_seed
@@ -25,7 +25,10 @@ class Trainer:
                                   str(current_time.tm_min).zfill(2)])
 
         self.in_channel = in_channel
-        self.classifier = classifier(img_size, backbone_layers, attention_layers, in_channel).cuda(device)
+        # print(in_channel)
+        self.classifier = classifier(img_size, backbone_layers, attention_layers,
+                                     in_channel, backbone, pretrained).cuda(device)
+        print(self.classifier.backbone.conv1.weight.isnan().any())
         self.data = data
         self.optimizer = optimizer(self.classifier.parameters(), lr=lr)
         self.scheduler = scheduler(self.optimizer, **scheduler_params)
@@ -49,27 +52,37 @@ class Trainer:
         self.data.save_split(fr"{self.time_code}_{random_seed}")
 
     def train(self):
-        loader = DataLoader(self.data.train, collate_fn=collate_fn, batch_size=self.bs, shuffle=True,
+        loader = DataLoader(self.data.train, collate_fn=collate_fn, batch_size=self.bs, shuffle=False,
                             num_workers=self.num_workers)
         print("Training")
         for epoch in range(self.max_epoch):
             t = time.time()
             self.epoch_loss = 0
+            n = self.data.train.n
+            print(n, len(self.data.train))
             for i, (data, label) in enumerate(loader):
-                torch.cuda.synchronize()
-
+                # torch.cuda.synchronize()
+                label = torch.stack(label)
                 bs = len(data)
-                y = torch.argmax(torch.stack(label), dim=1)
+                y = torch.argmax(label, dim=1)
 
-                probs = self.classifier(data)
+                try:
+                    probs = self.classifier(data)
+                except AssertionError:
+                    print(i, "input")
+                    print(self.data.train.data[i])
+                    raise
 
-                loss = self.loss(probs, y)
+                assert not probs.isnan().any(), f"{i} probs"
+
+                # print(probs.shape)
+                loss = self.loss(probs, y, n)
 
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
 
-                self.epoch_loss += loss.detach().cpu().item() * bs
+                self.epoch_loss += loss.detach().cpu().item()  # * bs
 
                 gc.collect()
                 del data
@@ -77,8 +90,6 @@ class Trainer:
                 del probs
                 del loss
                 gc.collect()
-
-                # torch.cuda.empty_cache()
 
             self.scheduler.step()
             torch.cuda.empty_cache()
@@ -92,17 +103,19 @@ class Trainer:
             print(f"  Epoch Running Time: {time.time()-t}")
             print(f"  Training Loss: {train_loss}")
             print(f"  Validation Loss: {valid_loss}")
-            for metric_name, value in metrics:
-                if (metric_name == self.selection_metric) and (value > self.highest_metric):
-                    self.highest_metric = value
-                    self.save(epoch)
-                    self.highest_epoch = epoch
-                elif (metric_name == self.selection_metric) and (epoch - self.highest_epoch >= 10):
-                    self.highest_metric = value
-                    self.save(epoch)
-                    self.highest_epoch = epoch
-                self.writer.add_scalar(f"{metric_name}", value, epoch)
-                print(f"  {metric_name}: {value}")
+            if (epoch+1) % 4 == 0:
+                self.save(epoch)
+            # for metric_name, value in metrics:
+            #     if (metric_name == self.selection_metric) and (value > self.highest_metric):
+            #         self.highest_metric = value
+            #         self.save(epoch)
+            #         self.highest_epoch = epoch
+            #     elif (metric_name == self.selection_metric) and (epoch - self.highest_epoch >= 10):
+            #         self.highest_metric = value
+            #         self.save(epoch)
+            #         self.highest_epoch = epoch
+            #     self.writer.add_scalar(f"{metric_name}", value, epoch)
+            #     print(f"  {metric_name}: {value}")
             print()
             torch.cuda.empty_cache()
 
@@ -110,33 +123,38 @@ class Trainer:
         if self.data.test:
             loader = DataLoader(self.data.test, collate_fn=collate_fn, batch_size=self.bs, shuffle=True,
                                 num_workers=self.num_workers)
+            n = self.data.test.n
             valid_size = len(self.data.test)
             # print(self.data.test[0])
         else:
             loader = DataLoader(self.data.valid, collate_fn=collate_fn, batch_size=self.bs, shuffle=True,
                                 num_workers=self.num_workers)
+            n = self.data.valid.n
             valid_size = len(self.data.valid)
+        print(n, valid_size)
         validation_loss = 0
         prediction = []
         true_label = []
         for i, (data, label) in enumerate(loader):
-            # print(torch.cuda.memory_allocated())
             bs = len(data)
-            # print(torch.cuda.memory_allocated())
-            probs = self.classifier(data).detach()
-            # print(torch.cuda.memory_allocated())
+
+            try:
+                probs = self.classifier(data)
+            except AssertionError:
+                print(i, "input")
+                raise
+
+            assert not probs.isnan().any(), f"{i} probs"
+
             y = torch.argmax(torch.stack(label), dim=1)
-             #print(torch.cuda.memory_allocated())
+
             prediction.append(probs.detach().cpu())
-            # print(torch.cuda.memory_allocated())
+
             true_label.append(y.detach().cpu())
-            # print(torch.cuda.memory_allocated())
-            loss = self.loss(probs, y).detach().cpu().item()
-            # print(torch.cuda.memory_allocated())
-            validation_loss += loss * bs
-            # torch.cuda.empty_cache()
-            # print(torch.cuda.memory_allocated())
-            # print()
+
+            loss = self.loss(probs, y, n).detach().cpu().item()
+
+            validation_loss += loss
 
             gc.collect()
             del data
@@ -145,8 +163,8 @@ class Trainer:
             del loss
             gc.collect()
 
-        self.epoch_loss /= len(self.data.train)
-        validation_loss /= valid_size
+        # self.epoch_loss /= len(self.data.train)
+        # validation_loss /= valid_size
 
         prediction = torch.cat(prediction)
         true_label = torch.cat(true_label)

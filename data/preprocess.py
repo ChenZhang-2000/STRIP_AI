@@ -1,7 +1,9 @@
 import os
+import gc
 import math
 import time
 from pathlib import Path
+from multiprocessing import Pool
 
 import numpy as np
 import pandas as pd
@@ -31,9 +33,11 @@ def resize(x, device):
     c, w, h = x.shape[0], x.shape[1], x.shape[2]
     d = x.shape[1] - x.shape[2]
     if d > 0:
-        return torch.cat([torch.ones(c, w, d//2, device=device), x, torch.ones(c, w, d-d//2, device=device)], dim=2)
+        return torch.cat([torch.ones(c, w, d // 2, device=device), x, torch.ones(c, w, d - d // 2, device=device)],
+                         dim=2)
     elif d < 0:
-        return torch.cat([torch.ones(c, -d//2, h, device=device), x, torch.ones(c, -d+d//2, h, device=device)], dim=1)
+        return torch.cat([torch.ones(c, -d // 2, h, device=device), x, torch.ones(c, -d + d // 2, h, device=device)],
+                         dim=1)
     else:
         return x
 
@@ -47,15 +51,25 @@ def variance_mask(img, device):
         col_var = torch.std(channel, dim=0) ** 2
         row_var = torch.std(channel, dim=1) ** 2
 
+        # print(col_var.shape, row_var.shape)
+
         col_var_max = torch.max(col_var)
         row_var_max = torch.max(row_var)
 
-        cm *= (col_var < col_var_max/7)
-        rm *= (row_var < row_var_max/7)
+        cm *= (col_var < col_var_max / 7)
+        rm *= (row_var < row_var_max / 7)
+
+        del channel
+        del col_var
+        del row_var
+        del col_var_max
+        del row_var_max
+        gc.collect()
+
     return cm, rm
 
 
-def split_img(img, device):
+def split_img(img, device, W, H):
     _, h, w = img.shape
     col_mask, row_mask = variance_mask(img, device)
 
@@ -72,8 +86,8 @@ def split_img(img, device):
     col_empty_len = col_end_idx - col_start_idx + 1
     row_empty_len = row_end_idx - row_start_idx + 1
 
-    block_col_mask = (col_empty_len > w / 8) * (col_start_idx != 0) * (col_end_idx != w - 1)
-    block_row_mask = (row_empty_len > h / 8) * (row_start_idx != 0) * (row_end_idx != h - 1)
+    block_col_mask = (col_empty_len > W / 8) * (col_start_idx != 0) * (col_end_idx != w - 1)
+    block_row_mask = (row_empty_len > H / 8) * (row_start_idx != 0) * (row_end_idx != h - 1)
 
     block_col_start = torch.cat([torch.tensor([0]), col_end_idx[block_col_mask]])
     block_row_start = torch.cat([torch.tensor([0]), row_end_idx[block_row_mask]])
@@ -85,18 +99,41 @@ def split_img(img, device):
     for i in range(len(block_col_start)):
         for j in range(len(block_row_start)):
             block = img[:, block_row_start[j]:block_row_end[j],
-                        block_col_start[i]:block_col_end[i]]
-            keep, out_img = rm_bg(block, device)
+                    block_col_start[i]:block_col_end[i]]
+            keep, out_img = rm_bg(block, device, W, H)
             empty = empty and not keep
             if keep:
                 blocks.append(out_img.detach())
+
+            del out_img
+            del block
+            gc.collect()
     if empty:
         blocks.append(img.detach())
+        del img
+
+    del col_start_mask
+    del row_start_mask
+    del col_end_mask
+    del row_end_mask
+    del col_start_idx
+    del row_start_idx
+    del col_end_idx
+    del row_end_idx
+    del col_empty_len
+    del row_empty_len
+    del block_col_mask
+    del block_row_mask
+    del block_col_start
+    del block_row_start
+    del block_col_end
+    del block_row_end
+    gc.collect()
 
     return blocks
 
 
-def rm_bg(img, device):
+def rm_bg(img, device, W, H):
     _, h, w = img.shape
     col_mask, row_mask = variance_mask(img, device)
 
@@ -108,39 +145,59 @@ def rm_bg(img, device):
     point_br = block_bg_mask.flip(0, 1).flatten().argmin()
 
     pos_tl = (torch.div(point_tl, w, rounding_mode='floor'), point_tl % w)
-    pos_br = (h-torch.div(point_br, w, rounding_mode='floor'), w-point_br % w)
+    pos_br = (h - torch.div(point_br, w, rounding_mode='floor'), w - point_br % w)
 
-    keep = torch.std(img) >= 0.1
-    # print(torch.std(img))
+    keep = (torch.std(img) >= 0.1) and (w >= W//10) and (h >= H/10)
+    out = img[:, pos_tl[0]:pos_br[0], pos_tl[1]:pos_br[1]].detach()
 
-    return keep, img[:, pos_tl[0]:pos_br[0], pos_tl[1]:pos_br[1]].detach()
+    del col_mask
+    del row_mask
+    del block_bg_mask
+    del point_tl
+    del point_br
+    del pos_tl
+    del pos_br
+    gc.collect()
+
+    return keep, out
 
 
-def recursively_split(image, device):
-    blocks = split_img(image, device)
+def recursively_split(image, device, W, H):
+    blocks = split_img(image, device, W, H)
     if len(blocks) == 1:
         return blocks
     else:
         out = []
         for block in blocks:
-            out += split_img(block, device)
+            out += recursively_split(block.detach(), device, W, H)
+            del block
+            gc.collect()
+        torch.cuda.empty_cache()
         return out
 
 
-def get_gradient(image):
+def get_gradient(image, device):
     _, h, w = image.shape
     gray_image = Grayscale()(image).reshape(1, 1, h, w)
     image = image.reshape(1, 3, h, w)
 
-    pxzy = nn.functional.conv2d(gray_image, X_GD_KERNEL, stride=1, padding=1)
-    zxpy = nn.functional.conv2d(gray_image, Y_GD_KERNEL, stride=1, padding=1)
-    pxpy = nn.functional.conv2d(gray_image, PXPY_GD_KERNEL, stride=1, padding=1)
-    pxny = nn.functional.conv2d(gray_image, PXNY_GD_KERNEL, stride=1, padding=1)
+    pxzy = nn.functional.conv2d(gray_image, X_GD_KERNEL.to(device), stride=1, padding=1)
+    zxpy = nn.functional.conv2d(gray_image, Y_GD_KERNEL.to(device), stride=1, padding=1)
+    pxpy = nn.functional.conv2d(gray_image, PXPY_GD_KERNEL.to(device), stride=1, padding=1)
+    pxny = nn.functional.conv2d(gray_image, PXNY_GD_KERNEL.to(device), stride=1, padding=1)
     # nxpy = nn.functional.conv2d(gray_image, NXPY_GD_KERNEL, stride=1, padding=1)
     # nxny = nn.functional.conv2d(gray_image, NXNY_GD_KERNEL, stride=1, padding=1)
     # print(gray_image.shape)
+    out = torch.cat([image, pxzy, zxpy, pxpy, pxny], dim=1).reshape(7, h, w).detach()
 
-    return torch.cat([image, pxzy, zxpy, pxpy, pxny], dim=1).reshape(7, h, w).detach()
+    del image
+    del pxzy
+    del zxpy
+    del pxpy
+    del pxny
+    gc.collect()
+
+    return out
 
 
 def white_balance(image, device):
@@ -153,6 +210,11 @@ def white_balance(image, device):
     balanced[1] = image[1] / g_bg_color
     balanced[2] = image[2] / b_bg_color
 
+    del r_bg_color
+    del g_bg_color
+    del b_bg_color
+    gc.collect()
+
     return balanced.detach()
 
 
@@ -162,55 +224,51 @@ def img_preprocess(in_dir, out_dir, file_name, device, downsampling_methods, tra
     out = pyvips.Image.thumbnail(in_dir, w, height=h)
 
     array = out.numpy()
+
     t = torch.from_numpy(array).transpose(1, 2).transpose(0, 1).to(device)
+
     image = white_balance(t, device).detach()
 
-    # print(image.device)
-    blocks = recursively_split(image, device)
+    blocks = recursively_split(image, device, w, h)
 
     patient_id, image_num = file_name.split('\\')
 
-    if train:
-        for i, block in enumerate(blocks):
-            block = get_gradient(1-block)
-            padded = resize(block, device)
-            for method in downsampling_methods:
-                im = downsampling_methods[method](padded).detach().cpu()
-                torch.save(im, fr"{out_dir}\{method}\{patient_id}\{image_num}_{i}.gd")
-    else:
-        method = downsampling_methods[0]
-        img_data = [[] for _ in downsampling_methods]
-        last_img_num = -1
-        for i, block in enumerate(blocks):
-            block = get_gradient(1-block)
-            padded = resize(block, device)
+    for i, block in enumerate(blocks):
+        padded = resize(block.to(device), device).detach()
+        for method in downsampling_methods:
             im = downsampling_methods[method](padded).detach().cpu()
-            if image_num != last_img_num:
-                img_data.append([im])
-            else:
-                img_data[image_num].append(im)
-            last_img_num = image_num
+            torch.save(im, fr"{out_dir}\{method}\{patient_id}\{image_num}_{i}.gd")
+            del im
+            gc.collect()
 
-        index_data = []
-        out_data = []
-        index = 0
-        for images in img_data:
-            image_stack = torch.stack(images)
-            index += image_stack.shape[0]
-            index_data.append(index)
-            out_data.append(image_stack)
-        out_tensor = torch.cat(out_data)
+        del block
+        del padded
+        gc.collect()
+        torch.cuda.empty_cache()
 
-        index_tensors = []
-        last_index = 0
-        for index in index_data:
-            idx_t = torch.zeros(out_tensor.shape[0], dtype=bool)
-            idx_t[last_index:index] = True
-            last_index = index
-            index_tensors.append(idx_t)
-        index_tensor = torch.stack(index_tensors)
 
-        torch.save((out_tensor, index_tensor), fr"{out_dir}\{method}\{patient_id}.gd")
+def img_preprocess_process(args):
+    filename, downsampling, patient_id, img_num, DEVICE = args
+    global X_GD_KERNEL
+    global Y_GD_KERNEL
+    global PXPY_GD_KERNEL
+    global PXNY_GD_KERNEL
+    global NXPY_GD_KERNEL
+    global NXNY_GD_KERNEL
+    print(filename)
+    # Path(f"E:\\Datasets\\STRIP_AI\\new_processed\\Max\\{patient_id}").mkdir(parents=True, exist_ok=True)
+    Path(f"E:\\Datasets\\STRIP_AI\\new_processed\\Avg\\{patient_id}").mkdir(parents=True, exist_ok=True)
+    # Path(f"E:\\Datasets\\STRIP_AI\\new_processed\\Res\\{patient_id}").mkdir(parents=True, exist_ok=True)
+
+    with torch.no_grad():
+        try:
+            img_preprocess(filename, fr"E:\Datasets\STRIP_AI\new_processed", fr"{patient_id}\{img_num}",
+                           downsampling_methods=downsampling, device=DEVICE)
+        except RuntimeError:
+            img_preprocess(filename, fr"E:\Datasets\STRIP_AI\new_processed", fr"{patient_id}\{img_num}",
+                           downsampling_methods=downsampling, device='cpu')
+    torch.cuda.empty_cache()
+
 
 if __name__ == '__main__':
     # for f in os.listdir(r'E:\Datasets\STRIP_AI\reduced\CE'):
@@ -235,46 +293,19 @@ if __name__ == '__main__':
 
     df = info[['patient_id', 'label']].drop_duplicates(subset=['patient_id'])
     # print(df)
-    df.to_csv(fr"E:\Datasets\STRIP_AI\processed\info.csv")
+    df.to_csv(fr"E:\Datasets\STRIP_AI\new_processed\info.csv")
 
     img_size = 512
-    downsampling = {"Max": nn.AdaptiveMaxPool2d((img_size, img_size)),
-                    "Avg": nn.AdaptiveAvgPool2d((img_size, img_size)),
-                    "Res": Resize((img_size, img_size))}
+    downsampling = {"Avg": nn.AdaptiveAvgPool2d((img_size, img_size))}
+                    # "Max": nn.AdaptiveMaxPool2d((img_size, img_size)),
+                    # "Res": Resize((img_size, img_size))}
 
-    for idx in range(len(info)):
-        # image_id = info['image_id'][idx]
-        label = info['label'][idx]
-        patient_id = info['patient_id'][idx]
-        img_num = info['image_num'][idx]
+    pool = Pool(9)
 
-        filename = rf'E:\Datasets\STRIP_AI\raw\train\{patient_id}_{img_num}.tif'
-        print(f"Image: {patient_id}_{img_num}")
-        print(f"Start Time: {time.ctime()}")
-        print()
-        Path(f"E:\\Datasets\\STRIP_AI\\processed\\Max\\{patient_id}").mkdir(parents=True, exist_ok=True)
-        Path(f"E:\\Datasets\\STRIP_AI\\processed\\Avg\\{patient_id}").mkdir(parents=True, exist_ok=True)
-        Path(f"E:\\Datasets\\STRIP_AI\\processed\\Res\\{patient_id}").mkdir(parents=True, exist_ok=True)
+    img_info = ((rf"E:\Datasets\STRIP_AI\raw\train\{info['patient_id'][idx]}_{info['image_num'][idx]}.tif",
+                 downsampling, info['patient_id'][idx], info['image_num'][idx], DEVICE)
+                for idx in range(len(info)))  #
+    pool.map(img_preprocess_process, img_info)
 
-        with torch.no_grad():
-            try:
-                img_preprocess(filename, fr"E:\Datasets\STRIP_AI\processed", fr"{patient_id}\{img_num}",
-                               downsampling_methods=downsampling, device=DEVICE)
-            except RuntimeError:
-                X_GD_KERNEL = X_GD_KERNEL.to('cpu')
-                Y_GD_KERNEL = Y_GD_KERNEL.to('cpu')
-                PXPY_GD_KERNEL = PXPY_GD_KERNEL.to('cpu')
-                PXNY_GD_KERNEL = PXNY_GD_KERNEL.to('cpu')
-                NXPY_GD_KERNEL = NXPY_GD_KERNEL.to('cpu')
-                NXNY_GD_KERNEL = NXNY_GD_KERNEL.to('cpu')
-                img_preprocess(filename, fr"E:\Datasets\STRIP_AI\processed", fr"{patient_id}\{img_num}",
-                               downsampling_methods=downsampling, device='cpu')
-
-                X_GD_KERNEL = X_GD_KERNEL.to(DEVICE)
-                Y_GD_KERNEL = Y_GD_KERNEL.to(DEVICE)
-                PXPY_GD_KERNEL = PXPY_GD_KERNEL.to(DEVICE)
-                PXNY_GD_KERNEL = PXNY_GD_KERNEL.to(DEVICE)
-                NXPY_GD_KERNEL = NXPY_GD_KERNEL.to(DEVICE)
-                NXNY_GD_KERNEL = NXNY_GD_KERNEL.to(DEVICE)
-
-        torch.cuda.empty_cache()
+    pool.close()
+    pool.join()
