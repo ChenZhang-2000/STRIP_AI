@@ -17,5 +17,5 @@ img_size: 512
 bs: 3
 max_epoch: 120
 lr: 0.000008
-backbone_layers: [3, 4, 23, 3]
+backbone_layers: [3, 4, 6, 3]
 attention_layers: [4, 2]

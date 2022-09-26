@@ -1,10 +1,10 @@
 module:
-  classifier: "20220919"
+  classifier: "ResNet50"
   optimizer: "Adam"
-  backbone: 'ResNet'
-  pretrained: "202209250033_3407\\weights\\119.pth"
+  backbone: ''
+  pretrained: ''
   loss: "WMCL"
-  scheduler: "Exp_970d"
+  scheduler: "Exp_980d"
 
 seed: 3407
 dataset: 'Avg_Aug_7'
@@ -14,8 +14,8 @@ num_workers: 0
 in_dimensions: [0, 7]
 test_size: 0.25
 img_size: 512
-bs: 2
+bs: 3
 max_epoch: 120
 lr: 0.000008
-backbone_layers: [3, 8, 36, 3]
-attention_layers: [4, 4]
+backbone_layers: [3, 4, 23, 3]
+attention_layers: [4, 2]

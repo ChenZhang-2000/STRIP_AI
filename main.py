@@ -49,6 +49,8 @@ def setup_seed(seed=3407):
 
 if __name__ == "__main__":
     for config_file in ['version_0']:
+        # pretrain_resnet152_7
+        # pretrain_resnet101_7
         # pretrain_resnet50_7
         # version_0
         config = read_config("configs", config_file)

@@ -28,7 +28,9 @@ class Trainer:
         # print(in_channel)
         self.classifier = classifier(img_size, backbone_layers, attention_layers,
                                      in_channel, backbone, pretrained).cuda(device)
-        print(self.classifier.backbone.conv1.weight.isnan().any())
+        # self.classifier.load_state_dict(torch.load(r"runs\202209201518_3407\weights\63.pth"))
+
+        # print(self.classifier.backbone.conv1.weight.isnan().any())
         self.data = data
         self.optimizer = optimizer(self.classifier.parameters(), lr=lr)
         self.scheduler = scheduler(self.optimizer, **scheduler_params)
@@ -59,7 +61,7 @@ class Trainer:
             t = time.time()
             self.epoch_loss = 0
             n = self.data.train.n
-            print(n, len(self.data.train))
+            # print(n, len(self.data.train))
             for i, (data, label) in enumerate(loader):
                 # torch.cuda.synchronize()
                 label = torch.stack(label)
@@ -131,7 +133,7 @@ class Trainer:
                                 num_workers=self.num_workers)
             n = self.data.valid.n
             valid_size = len(self.data.valid)
-        print(n, valid_size)
+        # print(n, valid_size)
         validation_loss = 0
         prediction = []
         true_label = []
@@ -144,7 +146,7 @@ class Trainer:
                 print(i, "input")
                 raise
 
-            assert not probs.isnan().any(), f"{i} probs"
+            # probs = probs.flip(dims=[1])
 
             y = torch.argmax(torch.stack(label), dim=1)
 

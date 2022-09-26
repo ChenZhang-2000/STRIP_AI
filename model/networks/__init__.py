@@ -1,1 +1,1 @@
-from .classifier import Classifier, ResNet50
+from .classifier import Classifier, ResNet

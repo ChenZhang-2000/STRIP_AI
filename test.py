@@ -14,7 +14,7 @@ import pyvips
 import imagesize
 
 from data.preprocess import img_preprocess
-from model.networks.classifier import ResNet50
+from model.networks.classifier import ResNet
 
 
 directory = rf'E:\Datasets\STRIP_AI\new_processed\Avg'
@@ -27,7 +27,11 @@ for idx, patient_id in enumerate(os.listdir(to_directory)):
             images = torch.load(to_directory + f"\\{patient_id}\\{file_name}")
             # print(file_name)
             for i, image in enumerate(images):
-                out = ResNet50(image)
+                out = ResNet(image)
                 if out.isnan().any():
                     print(file_name, i)
                     print()
+
+
+
+

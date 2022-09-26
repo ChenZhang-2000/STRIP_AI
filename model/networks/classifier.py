@@ -8,8 +8,8 @@ from .modules.attention import NonLocalSelfAttention, MergeBatchSelfAttention, S
 
 
 @register_classifier
-class ResNet50(nn.Module):
-    name = "ResNet50"
+class ResNet(nn.Module):
+    name = "ResNet"
 
     def __init__(self, img_size, backbone_layers, attention_layers, in_channel=3, backbone=ResNetModel, pretrain=None):
         super().__init__()
@@ -20,7 +20,7 @@ class ResNet50(nn.Module):
 
         self.classifier = nn.Sequential(nn.Linear(global_feature_shape[1], global_feature_shape[1] // 2),
                                         nn.Linear(global_feature_shape[1] // 2, 2),
-                                        Sigmoid())
+                                        nn.Softmax())
 
         # for m in self.modules():
         #     if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
@@ -42,7 +42,7 @@ class ResNet50(nn.Module):
                 features.append(feature)
             # print(features)
             features = torch.cat(features, dim=0)
-            features = torch.sum(features, dim=0)
+            features = torch.mean(features, dim=0)
             # print(features.shape)
             assert not features.isnan().any(), "NaN features"
             preds = self.classifier(features)
@@ -56,7 +56,7 @@ class ResNet50(nn.Module):
 class Classifier(nn.Module):
     name = "20220824"
 
-    def __init__(self, img_size, backbone_layers, attention_layers, in_channel=3, backbone=ResNet50, pretrain=None):
+    def __init__(self, img_size, backbone_layers, attention_layers, in_channel=3, backbone=ResNet, pretrain=None):
         super().__init__()
         if not pretrain:
             self.backbone = backbone(backbone_layers, in_channel)
@@ -112,10 +112,10 @@ class Classifier(nn.Module):
 class Classifier(nn.Module):
     name = "20220919"
 
-    def __init__(self, img_size, backbone_layers, attention_layers, in_channel=3, backbone=ResNet50, pretrain=None):
+    def __init__(self, img_size, backbone_layers, attention_layers, in_channel=3, backbone=ResNetModel, pretrain=None):
         super().__init__()
         if not pretrain:
-            self.backbone = backbone(backbone_layers, in_channel)
+            self.backbone = ResNetModel(backbone_layers, in_channel)
         else:
             backbone = backbone(img_size, backbone_layers, attention_layers, in_channel, backbone, pretrain)
             backbone.load_state_dict(torch.load(rf"runs\{pretrain}"))
@@ -140,7 +140,7 @@ class Classifier(nn.Module):
 
         self.classifier = nn.Sequential(nn.Linear(4096, 2048),
                                         nn.Linear(2048, 2),
-                                        Sigmoid())
+                                        nn.Softmax())
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
@@ -168,7 +168,9 @@ class Classifier(nn.Module):
                 features.append(feature)
             features = torch.cat(features, dim=0).reshape(-1, 32, 1024)  # N x 32 x 1024
             out_feature = self.multi_scan_attention(features)  # N x 4096
-            out_feature = torch.sum(out_feature, dim=0)
+            out_feature = torch.mean(out_feature, dim=0)
             out.append(out_feature)
         out = torch.stack(out)  # BS x 4096
-        return self.classifier(out)  # BS x 2
+        out = self.classifier(out)  # BS x 2
+        # print(out)
+        return out
