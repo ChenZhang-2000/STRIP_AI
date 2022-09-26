@@ -1,5 +1,5 @@
 module:
-  classifier: "ResNet50"
+  classifier: "ResNet"
   optimizer: "Adam"
   backbone: ''
   pretrained: ''
